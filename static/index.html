@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stock Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root { font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif; }
+      body { font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif; }
+
+      @keyframes bounce-dot {
+        0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+        40% { transform: translateY(-4px); opacity: 1; }
+      }
+      .dot { animation: bounce-dot 1.2s infinite ease-in-out; }
+
+      @keyframes fade-in-up {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .fade-in { animation: fade-in-up 0.3s ease-out both; }
+
+      .scroll-area::-webkit-scrollbar { width: 8px; }
+      .scroll-area::-webkit-scrollbar-thumb { background: rgba(100,116,139,0.3); border-radius: 9999px; }
+      .scroll-area::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,0.5); }
+      .scroll-area::-webkit-scrollbar-track { background: transparent; }
+    </style>
+  </head>
+  <body class="bg-slate-100 text-slate-900 antialiased">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useRef, useEffect } = React;
+
+      const SUGGESTIONS = [
+        "Based on the last month, should I buy or sell Apple?",
+        "What's the current price of NVDA?",
+        "What were the highest and lowest prices for Tesla this month?",
+        "What should I buy or sell in the technology sector?",
+        "What is a P/E ratio?",
+      ];
+
+      async function askStock(question) {
+        const res = await fetch("/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          throw new Error(`Request failed (${res.status}). ${detail}`.trim());
+        }
+        const data = await res.json();
+        return data.response;
+      }
+
+      function cleanMarkdown(text) {
+        if (!text) return text;
+        return text
+          .replace(/^[ \t]*[\*\-\u2022]\s+/gm, "• ")
+          .replace(/^[ \t]*#{1,6}\s*/gm, "")
+          .replace(/\*\*\*(.*?)\*\*\*/g, "$1")
+          .replace(/\*\*(.*?)\*\*/g, "$1")
+          .replace(/\*(.*?)\*/g, "$1")
+          .replace(/\*+/g, "")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+      }
+
+      function Avatar({ isUser }) {
+        if (isUser) {
+          return (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white shadow-sm">
+              You
+            </div>
+          );
+        }
+        return (
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-sm shadow-sm">
+            📈
+          </div>
+        );
+      }
+
+      function Message({ role, content, error }) {
+        const isUser = role === "user";
+        const bubble = isUser
+          ? "bg-blue-600 text-white rounded-br-md"
+          : error
+          ? "bg-red-50 text-red-700 border border-red-200 rounded-bl-md"
+          : "bg-white text-slate-800 border border-slate-200/80 rounded-bl-md";
+        return (
+          <div className={`fade-in flex items-start gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+            <Avatar isUser={isUser} />
+            <div className={`max-w-[85%] rounded-2xl px-5 py-3.5 text-[15px] leading-7 whitespace-pre-wrap shadow-sm ${bubble}`}>
+              {isUser ? content : cleanMarkdown(content)}
+            </div>
+          </div>
+        );
+      }
+
+      function App() {
+        const [messages, setMessages] = useState([]);
+        const [value, setValue] = useState("");
+        const [loading, setLoading] = useState(false);
+        const scrollRef = useRef(null);
+        const taRef = useRef(null);
+
+        useEffect(() => {
+          scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+        }, [messages, loading]);
+
+        useEffect(() => {
+          const ta = taRef.current;
+          if (!ta) return;
+          ta.style.height = "auto";
+          ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
+        }, [value]);
+
+        async function send(question) {
+          const q = (question ?? value).trim();
+          if (!q || loading) return;
+          setValue("");
+          setMessages((prev) => [...prev, { role: "user", content: q }]);
+          setLoading(true);
+          try {
+            const answer = await askStock(q);
+            setMessages((prev) => [...prev, { role: "assistant", content: answer }]);
+          } catch (err) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", error: true, content: "Sorry, I couldn't get an answer. " + (err?.message || "") },
+            ]);
+          } finally {
+            setLoading(false);
+          }
+        }
+
+        function onKeyDown(e) {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            send();
+          }
+        }
+
+        return (
+          <main className="mx-auto flex h-screen max-w-3xl flex-col px-4">
+            <header className="border-b border-slate-200 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-lg shadow-sm">
+                  📈
+                </div>
+                <div>
+                  <h1 className="text-lg font-bold tracking-tight text-slate-900">Stock Assistant</h1>
+                  <p className="text-xs text-slate-500">
+                    AI-powered analysis from 30 days of prices, technicals &amp; news
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3.5 text-sm text-slate-600 shadow-sm">
+                <p className="font-semibold text-slate-700">What you can ask</p>
+                <ul className="mt-1.5 list-disc space-y-1 pl-5 text-[13px] leading-5">
+                  <li>Live price &amp; the month's high / low for a stock</li>
+                  <li>Buy / sell / hold recommendations combining technicals (SMA, MACD, RSI, momentum, volatility) with fundamentals (P/E, growth, analyst targets) and recent news</li>
+                  <li>
+                    <span className="font-semibold text-slate-700">Sector-level analysis</span> — rank the
+                    top stocks in a sector into buy vs sell/avoid by 30-day performance
+                  </li>
+                  <li>General questions about markets and investing terms</li>
+                </ul>
+                <p className="mt-2 text-xs text-slate-500">
+                  <span className="font-semibold">Supported sectors:</span> technology, finance, healthcare,
+                  energy, retail/consumer, industrial, materials, utilities, real estate, communication,
+                  consumer defensive, automotive.
+                </p>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => send(s)}
+                    disabled={loading}
+                    className="rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:text-blue-600 hover:shadow disabled:opacity-50"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </header>
+
+            <div ref={scrollRef} className="scroll-area flex-1 space-y-5 overflow-y-auto py-6">
+              {messages.length === 0 && (
+                <div className="flex h-full flex-col items-center justify-center text-center">
+                  <p className="text-sm text-slate-400">
+                    Your conversation will appear here. Ask a question or pick a sample above.
+                  </p>
+                </div>
+              )}
+
+              {messages.map((m, i) => (
+                <Message key={i} role={m.role} content={m.content} error={m.error} />
+              ))}
+
+              {loading && (
+                <div className="fade-in flex items-start gap-3">
+                  <Avatar isUser={false} />
+                  <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md border border-slate-200/80 bg-white px-5 py-4 shadow-sm">
+                    <span className="dot h-2 w-2 rounded-full bg-slate-400"></span>
+                    <span className="dot h-2 w-2 rounded-full bg-slate-400" style={{ animationDelay: "0.2s" }}></span>
+                    <span className="dot h-2 w-2 rounded-full bg-slate-400" style={{ animationDelay: "0.4s" }}></span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-slate-200 py-4">
+              <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white p-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                <textarea
+                  ref={taRef}
+                  className="flex-1 resize-none bg-transparent px-3 py-2 text-[15px] leading-6 outline-none placeholder:text-slate-400 disabled:opacity-60"
+                  rows={1}
+                  placeholder="Ask about a stock, e.g. How is Apple doing this month?"
+                  value={value}
+                  disabled={loading}
+                  onChange={(e) => setValue(e.target.value)}
+                  onKeyDown={onKeyDown}
+                />
+                <button
+                  onClick={() => send()}
+                  disabled={loading || !value.trim()}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Send"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+                    <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.926A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.085l-1.414 4.926a.75.75 0 00.826.95 28.897 28.897 0 0015.293-7.155.75.75 0 000-1.114A28.897 28.897 0 003.105 2.289z" />
+                  </svg>
+                </button>
+              </div>
+              <p className="mt-2 text-center text-xs text-slate-400">
+                IMPORTANT DISCLAIMER: This response is automated, AI-generated output provided for
+                general informational and educational purposes ONLY. It is NOT financial, investment,
+                tax, accounting, or legal advice. No advisory, broker, or fiduciary relationship is
+                created by your use of this tool. The creators and operators of this tool make no
+                warranties of any kind and accept NO liability for any loss or damage arising from use
+                of, or reliance on, this information.
+              </p>
+            </div>
+          </main>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
